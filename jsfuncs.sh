@@ -27,6 +27,10 @@ source "$rootdir/lib/inifuncs.sh"
 # different from "ON" means "off"
 BYNAME="OFF"
 byname_msg=
+# MAXCONTROLLER is a number to indicate the number of controllers configurable in this script.
+# In  the settings we can toggle this from 4 and 8
+MAXCONTROLLERS=4
+maxcontrollers_msg=
 
 
 # borrowed code from runcommand.sh
@@ -169,6 +173,15 @@ function get_configs() {
     fi
 
     byname_msg="Selection by name is: [$BYNAME]\n\n"
+    
+    iniGet max_controllers "$global_jscfg"
+    if [[ "$ini_value" =~ ^[0-9]+$  ]]; then
+        MAXCONTROLLERS="$ini_value"
+    else
+        MAXCONTROLLERS="4"
+    fi
+
+    maxcontrollers_msg="Max Controllers is: [$MAXCONTROLLERS]\n"
 }
 
 
@@ -335,7 +348,7 @@ function js_to_retroarchcfg() {
     fill_jslist_file
 
     local js_index
-    for i in 1 2 3 4; do
+    for i in $(seq 1 $MAXCONTROLLERS); do
         iniGet "input_player${i}_joypad_index" "$jscfg"
         js_index=$(js_name2index "$ini_value")
 
@@ -392,9 +405,10 @@ _EoF_
         else
             iniSet "joystick_selection_by_name" "false" "$jscfg"
         fi
+        iniSet "max_controllers" "$MAXCONTROLLERS" "$jscfg"
     fi
 
-    for i in 1 2 3 4; do
+    for i in $(seq 1 $MAXCONTROLLERS); do
         iniGet "input_player${i}_joypad_index" "$retroarchcfg"
         if [[ -z "$ini_value" ]]; then
             iniUnset "input_player${i}_joypad_index" "$((i-1))" "$jscfg"
@@ -455,7 +469,7 @@ function toggle_byname() {
         # get all the systems *joypad_index configs and convert to an
         # equivalent joystick-selection.cfg
         for file in $(find "$configdir" -name retroarch.cfg 2>/dev/null); do
-            if grep -q "^[[:space:]#]*input_player[1-4]_joypad_index[[:space:]]*=" "$file"; then
+            if grep -q "^[[:space:]#]*input_player[1-8]_joypad_index[[:space:]]*=" "$file"; then
                 system=${file%/*}
                 system=${system//$configdir\//}
                 retroarch_to_jscfg "$system"
@@ -467,16 +481,59 @@ function toggle_byname() {
 
 
 
+###############################################################################
+# Toggle the max controllers from 4 to 8.
+#
+# If controllers are set to 4, we setup 4 controllers
+# We save the ini value "max_controllers" to "4" in global joystick-selection.cfg.
+#
+# Globals:
+#   MAXCONTROLLERS
+#   maxcontrollers_msg
+#
+# Arguments:
+#   None
+#
+# Returns:
+#   0
+function toggle_maxcontrollers() {
+    if [[ "$MAXCONTROLLERS" = "4" ]]; then
+        dialog \
+          --title "Toggle \"8 Controllers\" capability" \
+          --yesno "You are currently setup for 4 controllers.\n\nAre you sure you want to change this to 8 controllers in the joystick configurations?" \
+          0 0 >/dev/tty || return 1
+
+        iniSet "max_controllers" "8" "$global_jscfg"
+        MAXCONTROLLERS="8"
+    else
+        dialog \
+          --title "Toggle \"4 Controllers\" capability" \
+          --yesno "You are currently setup for 8 controllers.\n\nAre you sure you want to change this to 4 controllers in the joystick configurations?" \
+          0 0 >/dev/tty || return 1
+
+        dialog --title "Joystick Selection" --infobox "Please wait..." 0 0
+        
+        iniSet "max_controllers" "4" "$global_jscfg"
+        MAXCONTROLLERS="4"
+        
+        ## TODO loop through all the configs, then unset all the 5 - 8 players
+    fi
+    maxcontrollers_msg="Max Controllers is: [$MAXCONTROLLERS]\n"
+} #end of toggle_maxcontrollers
+
+
+
 # Choose between global config, system specific config, toggle byname
 function main_menu() {
     while true; do
         cmd=(dialog \
              --title " Joystick Selection Main Menu " \
-             --menu "${byname_msg}This is a tool to let you choose which controller to use for RetroArch players 1-4" 19 80 12)
+             --menu "${maxcontrollers_msg}${byname_msg}This is a tool to let you choose which controller to use for RetroArch players 1-${MAXCONTROLLERS}" 19 80 12)
         options=(
             1 "Global joystick selection."
             2 "System specific joystick selection."
             3 "Toggle the joystick selection \"by-name\" method."
+            4 "Toggle the controllers from 4 to 8"
         )
         choice=$("${cmd[@]}" "${options[@]}" 2>&1 >/dev/tty)
     
@@ -489,6 +546,9 @@ function main_menu() {
                 ;;
 
                 3)  toggle_byname
+                ;;
+
+                4)  toggle_maxcontrollers
                 ;;
             esac
         else
@@ -526,7 +586,7 @@ function system_js_select_menu() {
     while true; do
         # the 'if' outside the 'for' is for a performance reason
         if [[ "$BYNAME" = "ON" ]]; then
-            for i in 1 2 3 4; do
+            for i in $(seq 1 $MAXCONTROLLERS); do
                 iniGet "input_player${i}_joypad_index" "$jscfg"
                 if [[ -z "$ini_value" ]]; then
                     js_name_p[$i]="** UNSET **"
@@ -537,7 +597,7 @@ function system_js_select_menu() {
                 fi
             done
         else
-            for i in 1 2 3 4; do
+            for i in $(seq 1 $MAXCONTROLLERS); do
                 iniGet "input_player${i}_joypad_index" "$retroarchcfg"
                 if [[ -z "$ini_value" ]]; then
                     js_name_p[$i]="** UNSET **"
@@ -554,12 +614,26 @@ function system_js_select_menu() {
              --menu "${byname_msg}OBS: UNSET/NOT CONNECTED joysticks are set to RetroArch defaults when launching a game.\n\nChoose the player you want to configure:" \
              19 80 12
         )
-        options=(
-            1 "${js_name_p[1]}"
-            2 "${js_name_p[2]}"
-            3 "${js_name_p[3]}"
-            4 "${js_name_p[4]}"
-        )
+        # If someone smarter could append to this array dynamically, that would be better
+        if [ "$MAXCONTROLLERS" == 8 ]; then
+            options=(
+                1 "${js_name_p[1]}"
+                2 "${js_name_p[2]}"
+                3 "${js_name_p[3]}"
+                4 "${js_name_p[4]}"
+                5 "${js_name_p[5]}"
+                6 "${js_name_p[6]}"
+                7 "${js_name_p[7]}"
+                8 "${js_name_p[8]}"
+            )
+        else
+            options=(
+                1 "${js_name_p[1]}"
+                2 "${js_name_p[2]}"
+                3 "${js_name_p[3]}"
+                4 "${js_name_p[4]}"
+            )
+        fi
         choice=$("${cmd[@]}" "${options[@]}" 2>&1 >/dev/tty)
     
         if [[ -n "$choice" ]]; then
@@ -596,7 +670,7 @@ function system_js_select_menu() {
 # Returns:
 #   0
 function player_js_select_menu() {
-    [[ "$1" =~ ^[1-4]$ ]] || fatalError "player_js_select_menu: invalid argument!"
+    [[ "$1" =~ ^[1-$MAXCONTROLLERS]$ ]] || fatalError "player_js_select_menu: invalid argument!"
     [[ "$2" ]] && [[ -d "$configdir/$2" ]] || fatalError "player_js_select_menu: arg2 must be a valid system!"
 
     local i="$1"
